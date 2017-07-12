@@ -5,29 +5,32 @@ defmodule LoopEx do
       require Logger
       def loop(param, interval \\ 300) do
         Logger.metadata(loop_module: __MODULE__)
-        Logger.info "Loop begin, interval:#{interval}"
+        Logger.info "Loop [#{__MODULE__}] begin, interval:#{interval}"
 
         begin = Timex.now |> Timex.to_unix
-        #LoopEx.begin(__MODULE__, interval)
-        LoopEx.fine(__MODULE__, interval)
+        LoopEx.begin(__MODULE__, interval)
 
         try do
-          unquote(:run)(param)
-          #LoopEx.done(__MODULE__)
+          case unquote(:run)(param) do
+            :error        -> LoopEx.fail(__MODULE__, "return fail value")
+            {:error, msg} -> LoopEx.fail(__MODULE__, msg)
+            _             -> LoopEx.suc(__MODULE__)
+          end
+          Logger.info "Loop [#{__MODULE__}] end"
         rescue
           err -> 
             Logger.error "rescue: #{inspect err}"
-            LoopEx.msg(__MODULE__, err)
+            LoopEx.fail(__MODULE__, err)
         catch
           err ->
             Logger.error "catch: #{inspect err}"
-            LoopEx.msg(__MODULE__, err)
+            LoopEx.fail(__MODULE__, err)
         end
 
         due = interval - ( (Timex.now |> Timex.to_unix) - begin )
 
         if due > 0 do
-          Logger.info "Sleep #{due}s"
+          Logger.info "Loop [#{__MODULE__}] Sleep #{due}s"
           due |> :timer.seconds |> Process.sleep 
         end
 
@@ -36,71 +39,95 @@ defmodule LoopEx do
     end
   end
 
-  #counts begin end delay status last_error_count last_error_msg
+  defstruct count: 0, suc: 0, fail: 0, begin: 0, interval: 0, status: nil, last_error: nil
+
   use GenServer
 
   def start_link() do
-    GenServer.start_link(__MODULE__, [%{}, %{}], name: LoopEx)
+    GenServer.start_link(__MODULE__, %{}, name: LoopEx)
   end
 
-  def handle_cast({:fine, module, interval}, [stat, msgs]) do
-
+  def handle_cast({:begin, module, interval}, stats) do
     now = Timex.now |> Timex.to_unix
-    stat = Map.put(stat, module, {now, interval})
-    {:noreply, [stat, msgs]}
+    stat = Map.get(stats, module, %LoopEx{})
+    stat = stat
+    |> Map.put(:count, stat.count + 1)
+    |> Map.put(:begin, now)
+    |> Map.put(:interval, interval)
+    |> Map.put(:status, :running)
+
+    stats = Map.put(stats, module, stat)
+    {:noreply, stats}
   end
 
-  def handle_cast({:msg, module, msg}, [stat, msgs]) do
-    msg = if is_binary(msg), do: msg, else: inspect(msg)
+  def handle_cast({:suc, module}, stats) do
+    stat = Map.get(stats, module, %LoopEx{})
+    stat = stat
+    |> Map.put(:suc, stat.suc + 1)
+    |> Map.put(:status, :suc)
+    stats = Map.put(stats, module, stat)
+    {:noreply, stats}
+  end
+
+  def handle_cast({:fail, module, msg}, stats) do
     now = Timex.now |> Timex.to_unix
-    msgs = Map.put(msgs, module, {now, msg})
-    {:noreply, [stat, msgs]}
+    stat = Map.get(stats, module, %LoopEx{})
+    last_error = %{count: stat.count, time: now, msg: msg}
+    stat = stat
+    |> Map.put(:fail, stat.fail + 1)
+    |> Map.put(:status, :fail)
+    |> Map.put(:last_error, last_error)
+    stats = Map.put(stats, module, stat)
+    {:noreply, stats}
   end
 
-  def handle_cast({:delete, module}, [stat, msgs]) do
-    stat = Map.delete(stat, module)
-    msgs = Map.delete(msgs, module)
-    {:noreply, [stat, msgs]}
+
+  def handle_cast({:delete, module}, stats) do
+    stats = Map.delete(stats, module)
+    {:noreply, stats}
   end
 
-  def handle_call(:all, _from, [stat, msgs]) do
-    {:reply, [stat, msgs], [stat, msgs]}
+  def handle_call(:all, _from, stats) do
+    {:reply, stats, stats}
   end
 
-  def fine(module, interval) do
-    GenServer.cast(__MODULE__, {:fine, module, interval})
+  def begin(module, interval) do
+    GenServer.cast(__MODULE__, {:begin, module, interval})
   end
 
-  def msg(module, msg) do
-    GenServer.cast(__MODULE__, {:msg, module, msg})
+  def suc(module) do
+    GenServer.cast(__MODULE__, {:suc, module})
   end
+
+  def fail(module, msg) do
+    GenServer.cast(__MODULE__, {:fail, module, msg})
+  end
+
 
   def status do
 
     ratio = Application.get_env(:loop_ex, :ratio, 0.5)
     now = Timex.now |> Timex.to_unix
-    [stats, msgs] = GenServer.call(__MODULE__, :all)
-
-    stats |> Map.to_list |> Enum.map(fn {module, {start, interval}} -> 
-      late = (now - start - interval) - interval * ratio
-      {uptime, msg} = Map.get(msgs, module, {nil, nil})
-      stat = cond do
-        uptime && (now - uptime - interval) -> :error
-        late > 0                            -> :timeout
-        true                                -> :running
-      end
-      
-      [module, start, interval, late, stat, uptime, msg]
+    stats = GenServer.call(__MODULE__, :all)
+    stats |> Map.to_list |> Enum.map(fn {module, stat} -> 
+      exceed = (now - stat.begin - stat.interval) - stat.interval * ratio
+      new_stat = if exceed > 0, do: Map.put(stat, :status, :timeout), else: stat
+      new_stat |> Map.put(:exceed, exceed) |> Map.put(:module, module)
     end)
+
   end
 
-  @format "~30.. s|~15.. s|~15.. s|~10.. s|~10.. s|~15.. s|~30.. s\n"
+  @format "~20.. s|~7.. s|~6.. s|~6.. s|~6.. s|~10.. s|~10.. s|~10.. s|~70.. s\n"
   def show do
 
-    :io.format @format, ["Module", "Last", "Interval", "Delay", "Status", "Uptime", "Msg"];
+    :io.format @format, ~w(Module Status Count Suc Fail Begin Interval Exceed Error)
 
-    status() |> Enum.map(fn param ->
-      param = Enum.map(param, &to_string/1)
+    status() |> Enum.map(fn stat ->
+      last_error = stat.last_error
+      last_error = if last_error, do: "Happen at #{last_error.time}(count: #{last_error.count}), Msg: #{inspect last_error.msg}", else: ""
+
+      param = [stat.module, stat.status, stat.count, stat.suc, stat.fail, stat.begin, stat.interval, stat.exceed, last_error]
+      |> Enum.map(&to_string/1)
       :io.format @format, param
     end)
 
