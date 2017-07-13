@@ -3,38 +3,50 @@ defmodule LoopEx do
   defmacro __using__(_) do
     quote do
       require Logger
-      def loop(param, interval \\ 300) do
+      def loop(param, opt) when is_list(opt) do
+        interval       = Keyword.get(opt, :interval, 300)
+        start_after    = Keyword.get(opt, :after, 0)
+        sleep_on_error = Keyword.get(opt, :sleep_on_error, interval)
+        sleep_on_error = if sleep_on_error < 2, do: 2, else: sleep_on_error
+        start_after |> :timer.seconds |> Process.sleep
+        loop(param, interval, sleep_on_error)
+      end
+      def loop(param, interval, sleep_on_error) do
         Logger.metadata(loop_module: __MODULE__)
         Logger.info "Loop [#{__MODULE__}] begin, interval:#{interval}"
 
         begin = Timex.now |> Timex.to_unix
         LoopEx.begin(__MODULE__, interval)
 
-        try do
+        suc = try do
           case unquote(:run)(param) do
             :error        -> LoopEx.fail(__MODULE__, "return fail value")
             {:error, msg} -> LoopEx.fail(__MODULE__, msg)
             _             -> LoopEx.suc(__MODULE__)
           end
           Logger.info "Loop [#{__MODULE__}] end"
+          true
         rescue
           err -> 
-            Logger.error "rescue: #{inspect err}"
+            Logger.error "Loop [#{__MODULE__}] rescue: #{inspect err}"
             LoopEx.fail(__MODULE__, err)
+            false
         catch
           err ->
-            Logger.error "catch: #{inspect err}"
+            Logger.error "Loop [#{__MODULE__}] catch: #{inspect err}"
             LoopEx.fail(__MODULE__, err)
+            false
         end
 
         due = interval - ( (Timex.now |> Timex.to_unix) - begin )
+        due = if !suc && due > sleep_on_error, do: sleep_on_error, else: due
 
         if due > 0 do
           Logger.info "Loop [#{__MODULE__}] Sleep #{due}s"
           due |> :timer.seconds |> Process.sleep 
         end
 
-        loop(param, interval)
+        loop(param, interval, sleep_on_error)
       end
     end
   end
@@ -117,7 +129,7 @@ defmodule LoopEx do
 
   end
 
-  @format "~20.. s|~7.. s|~6.. s|~6.. s|~6.. s|~10.. s|~10.. s|~10.. s|~70.. s\n"
+  @format "~40.. s|~7.. s|~6.. s|~6.. s|~6.. s|~10.. s|~10.. s|~10.. s|~70.. s\n"
   def show do
 
     :io.format @format, ~w(Module Status Count Suc Fail Begin Interval Exceed Error)
