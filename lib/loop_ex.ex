@@ -152,7 +152,7 @@ defmodule LoopEx do
         stat.module,   stat.status, stat.count,
         stat.suc,      stat.fail,   stat.begin,
         stat.interval, stat.exceed, last_error
-      ] |> Enum.map(param, &to_string/1)
+      ] |> Enum.map(&to_string/1)
       :io.format @format, param
     end)
 
