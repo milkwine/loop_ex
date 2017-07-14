@@ -32,7 +32,8 @@ defmodule LoopEx.Mixfile do
   # Type "mix help deps" for more examples and options
   defp deps do
     [
-      {:timex, "~> 3.1"}
+      {:timex, "~> 3.1"},
+      {:credo, "~> 0.8", only: [:dev, :test], runtime: false}
     ]
   end
 end

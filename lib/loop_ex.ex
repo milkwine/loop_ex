@@ -1,5 +1,8 @@
 defmodule LoopEx do
 
+  @moduledoc """
+
+  """
   defmacro __using__(_) do
     quote do
       require Logger
@@ -30,7 +33,7 @@ defmodule LoopEx do
           Logger.info "Loop [#{__MODULE__}] end"
           true
         rescue
-          err -> 
+          err ->
             Logger.error "Loop [#{__MODULE__}] rescue: #{inspect err}"
             LoopEx.fail(__MODULE__, err)
             false
@@ -41,12 +44,12 @@ defmodule LoopEx do
             false
         end
 
-        due = interval - ( (Timex.now |> Timex.to_unix) - begin )
+        due = interval - ((Timex.now |> Timex.to_unix) - begin)
         due = if !suc && due > sleep_on_error, do: sleep_on_error, else: due
 
         if due > 0 do
           Logger.info "Loop [#{__MODULE__}] Sleep #{due}s"
-          due |> :timer.seconds |> Process.sleep 
+          due |> :timer.seconds |> Process.sleep
         end
 
         loop(param, interval, sleep_on_error)
@@ -54,11 +57,17 @@ defmodule LoopEx do
     end
   end
 
-  defstruct count: 0, suc: 0, fail: 0, begin: 0, interval: 0, status: nil, last_error: nil
+  defstruct count:        0,
+            suc:          0,
+            fail:         0,
+            begin:        0,
+            interval:     0,
+            status:     nil,
+            last_error: nil
 
   use GenServer
 
-  def start_link() do
+  def start_link do
     GenServer.start_link(__MODULE__, %{}, name: LoopEx)
   end
 
@@ -96,7 +105,6 @@ defmodule LoopEx do
     {:noreply, stats}
   end
 
-
   def handle_cast({:delete, module}, stats) do
     stats = Map.delete(stats, module)
     {:noreply, stats}
@@ -118,13 +126,12 @@ defmodule LoopEx do
     GenServer.cast(__MODULE__, {:fail, module, msg})
   end
 
-
   def status do
 
     ratio = Application.get_env(:loop_ex, :ratio, 0.5)
     now = Timex.now |> Timex.to_unix
     stats = GenServer.call(__MODULE__, :all)
-    stats |> Map.to_list |> Enum.map(fn {module, stat} -> 
+    stats |> Map.to_list |> Enum.map(fn {module, stat} ->
       exceed = (now - stat.begin - stat.interval) - stat.interval * ratio
       new_stat = if exceed > 0, do: Map.put(stat, :status, :timeout), else: stat
       new_stat |> Map.put(:exceed, exceed) |> Map.put(:module, module)
@@ -133,16 +140,19 @@ defmodule LoopEx do
   end
 
   @format "~40.. s|~7.. s|~6.. s|~6.. s|~6.. s|~10.. s|~10.. s|~10.. s|~70.. s\n"
+  @title  ~w(Module Status Count Suc Fail Begin Interval Exceed Error)
   def show do
 
-    :io.format @format, ~w(Module Status Count Suc Fail Begin Interval Exceed Error)
+    :io.format @format, @title
 
     status() |> Enum.map(fn stat ->
       last_error = stat.last_error
       last_error = if last_error, do: "Happen at #{last_error.time}(count: #{last_error.count}), Msg: #{inspect last_error.msg}", else: ""
-
-      param = [stat.module, stat.status, stat.count, stat.suc, stat.fail, stat.begin, stat.interval, stat.exceed, last_error]
-      |> Enum.map(&to_string/1)
+      param = [
+        stat.module,   stat.status, stat.count,
+        stat.suc,      stat.fail,   stat.begin,
+        stat.interval, stat.exceed, last_error
+      ] |> Enum.map(param, &to_string/1)
       :io.format @format, param
     end)
 

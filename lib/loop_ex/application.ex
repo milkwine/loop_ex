@@ -1,6 +1,9 @@
 defmodule LoopEx.Application do
   use Application
 
+  @moduledoc """
+
+  """
   def start(_type, _args) do
     import Supervisor.Spec
 
@@ -11,5 +14,5 @@ defmodule LoopEx.Application do
     opts = [strategy: :one_for_one, name: LoopEx.Supervisor]
     Supervisor.start_link(children, opts)
   end
-  
+
 end
