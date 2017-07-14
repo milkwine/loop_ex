@@ -8,11 +8,14 @@ defmodule LoopEx do
         start_after    = Keyword.get(opt, :after, 0)
         sleep_on_error = Keyword.get(opt, :sleep_on_error, interval)
         sleep_on_error = if sleep_on_error < 2, do: 2, else: sleep_on_error
+
+        Logger.metadata(loop_module: __MODULE__)
+        Logger.info "Loop [#{__MODULE__}] inti. Interval: #{interval}, start_after: #{start_after}, sleep_on_error: #{sleep_on_error}"
+
         start_after |> :timer.seconds |> Process.sleep
         loop(param, interval, sleep_on_error)
       end
       def loop(param, interval, sleep_on_error) do
-        Logger.metadata(loop_module: __MODULE__)
         Logger.info "Loop [#{__MODULE__}] begin, interval:#{interval}"
 
         begin = Timex.now |> Timex.to_unix
