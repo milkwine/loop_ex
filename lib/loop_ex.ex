@@ -6,54 +6,67 @@ defmodule LoopEx do
   defmacro __using__(_) do
     quote do
       require Logger
-      def loop(param, opt) when is_list(opt) do
+      def short_name, do: __MODULE__ |> to_string |> String.replace("Elixir.", "")
+      def guard_run(param, opt) when is_list(opt) do
+
+        Logger.metadata(loop_module: __MODULE__, param: param, opt: opt)
+
+
+        Process.flag(:trap_exit, true)
+
         interval       = Keyword.get(opt, :interval, 300)
-        start_after    = Keyword.get(opt, :after, 0)
+        timeout        = Keyword.get(opt, :timeout, round(interval * 1.5))
         sleep_on_error = Keyword.get(opt, :sleep_on_error, interval)
         sleep_on_error = if sleep_on_error < 2, do: 2, else: sleep_on_error
 
-        Logger.metadata(loop_module: __MODULE__)
-        Logger.info "Loop [#{__MODULE__}] inti. Interval: #{interval}, start_after: #{start_after}, sleep_on_error: #{sleep_on_error}"
+        Logger.info "Loop [#{short_name()}] inti. Interval: #{interval}, Timeout: #{timeout}, Sleep_on_Error: #{sleep_on_error}"
 
-        start_after |> :timer.seconds |> Process.sleep
-        loop(param, interval, sleep_on_error)
-      end
-      def loop(param, interval, sleep_on_error) do
-        Logger.info "Loop [#{__MODULE__}] begin, interval:#{interval}"
+        task           = Task.async(__MODULE__, :run, param)
+        begin          = Timex.now |> Timex.to_unix
 
-        begin = Timex.now |> Timex.to_unix
-        LoopEx.begin(__MODULE__, interval)
 
-        suc = try do
-          case unquote(:run)(param) do
-            :error        -> LoopEx.fail(__MODULE__, "return fail value")
-            {:error, msg} -> LoopEx.fail(__MODULE__, msg)
-            _             -> LoopEx.suc(__MODULE__)
-          end
-          Logger.info "Loop [#{__MODULE__}] end"
-          true
-        rescue
-          err ->
-            Logger.error "Loop [#{__MODULE__}] rescue: #{inspect err}"
-            LoopEx.fail(__MODULE__, err)
+        suc = case Task.yield(task, :timer.seconds(timeout)) do
+          {:ok, result} ->
+            case result do
+              :error        -> 
+                LoopEx.fail(short_name(), "return error atom")
+                false
+              {:error, msg} -> 
+                LoopEx.fail(short_name(), msg)
+                false
+              _             -> 
+                LoopEx.suc(short_name())
+                true
+            end
+          nil ->
+            Task.shutdown(task)
+            LoopEx.fail(short_name(), "Timeout!")
             false
-        catch
-          err ->
-            Logger.error "Loop [#{__MODULE__}] catch: #{inspect err}"
-            LoopEx.fail(__MODULE__, err)
+          {:exit, reason} ->
+            LoopEx.fail(short_name(), "Exit: #{inspect reason}")
             false
         end
+
+        Logger.info "Loop [#{short_name()}] end"
+        Process.flag(:trap_exit, false)
 
         due = interval - ((Timex.now |> Timex.to_unix) - begin)
         due = if !suc && due > sleep_on_error, do: sleep_on_error, else: due
 
         if due > 0 do
-          Logger.info "Loop [#{__MODULE__}] Sleep #{due}s"
-          due |> :timer.seconds |> Process.sleep
+          Logger.info "Loop [#{short_name()}] Sleep #{due}s"
+         due |> :timer.seconds |> Process.sleep
         end
-
-        loop(param, interval, sleep_on_error)
+        
       end
+
+      def loop(param, opt) when is_list(opt) do
+        start_after = Keyword.pop_first(opt, :after, 0)
+        if start_after != 0, do: start_after |> :timer.seconds |> Process.sleep
+        guard_run(param, opt)
+        loop(param, opt)
+      end
+
     end
   end
 
@@ -114,6 +127,10 @@ defmodule LoopEx do
     {:reply, stats, stats}
   end
 
+  def suc(module) do
+    GenServer.cast(__MODULE__, {:suc, module})
+  end
+
   def begin(module, interval) do
     GenServer.cast(__MODULE__, {:begin, module, interval})
   end
@@ -124,6 +141,10 @@ defmodule LoopEx do
 
   def fail(module, msg) do
     GenServer.cast(__MODULE__, {:fail, module, msg})
+  end
+
+  def del(module) do
+    GenServer.cast(__MODULE__, {:delete, module})
   end
 
   def status do
