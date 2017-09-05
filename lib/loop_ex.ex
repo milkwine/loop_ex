@@ -3,6 +3,7 @@ defmodule LoopEx do
   @moduledoc """
 
   """
+
   defmacro __using__(_) do
     quote do
       require Logger
@@ -10,7 +11,6 @@ defmodule LoopEx do
       def guard_run(param, opt) when is_list(opt) do
 
         Logger.metadata(loop_module: __MODULE__, param: param, opt: opt)
-
 
         Process.flag(:trap_exit, true)
 
@@ -24,17 +24,18 @@ defmodule LoopEx do
         task           = Task.async(__MODULE__, :run, param)
         begin          = Timex.now |> Timex.to_unix
 
+        LoopEx.begin(short_name(), interval)
 
         suc = case Task.yield(task, :timer.seconds(timeout)) do
           {:ok, result} ->
             case result do
-              :error        -> 
+              :error        ->
                 LoopEx.fail(short_name(), "return error atom")
                 false
-              {:error, msg} -> 
+              {:error, msg} ->
                 LoopEx.fail(short_name(), msg)
                 false
-              _             -> 
+              _             ->
                 LoopEx.suc(short_name())
                 true
             end
@@ -57,7 +58,7 @@ defmodule LoopEx do
           Logger.info "Loop [#{short_name()}] Sleep #{due}s"
          due |> :timer.seconds |> Process.sleep
         end
-        
+
       end
 
       def loop(param, opt) when is_list(opt) do
